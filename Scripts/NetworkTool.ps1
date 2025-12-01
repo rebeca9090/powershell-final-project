@@ -23,7 +23,7 @@ Phailin's responsibilities:
 - Optionally expand Auto-Fix for more detailed diagnostics or adapter restarts.
 
 Pending for Phailin:
-- Fix network adapter code before adding here
+- Test Test-Gateway (Error on campus, success at home)
 - Add comments to codes to explain the code
 - TODO in invoke-AutoFix
 #>
@@ -65,12 +65,53 @@ function Write-Log {
     }
 }
 function Test-NetworkAdapter {
-     <#
-        TODO (teammate): return [pscustomobject] with:
-        TestName, Success (bool), Details, Target, Timestamp
-        Make sure TestName is "Network Adapter" for Auto-Fix logic
-        If you need help understanding anything, reach out or ask ChatGPT
-    #>
+     [CmdletBinding()] 
+    param()
+
+    $ts = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    $testName = "Network Adapter"
+
+    try {
+        $adapters = @(Get-NetAdapter -ErrorAction SilentlyContinue)
+
+        if ($adapters.Count -eq 0) {
+            $details = "No network adapters found."
+            $success = $false
+            $target = "Local adapters"
+        }
+        else {
+            # Force array creation and trim status strings
+            $up = @($adapters | Where-Object { $_.Status.Trim() -eq "Up" })
+            
+            if ($up.Count -gt 0) {
+                $names = ($up | ForEach-Object { $_.Name }) -join ", "
+                $details = "Up adapters: $names"
+                $success = $true
+                $target = $names
+            } else {
+                $list = ($adapters | ForEach-Object { "$($_.Name): $($_.Status)" }) -join "; "
+                $details = "No adapters reporting 'Up'. Found: $list"
+                $success = $false
+                $target = "Local adapters"
+            }
+        }
+    }
+    catch {
+        $details = "Exception: $_"
+        $success = $false
+        $target = "Local adapters"
+    }
+    $result = [PSCustomObject]@{
+        TestName  = $testName
+        Success   = [bool]$success
+        Details   = $details
+        Target    = $target
+        Timestamp = $ts
+    }
+    $level = if ($success) { "Info" } else { "Error" }
+    Write-Log -Message "Test: $testName - Success: $success - $details" -Level $level -Data @($result)
+    $Global:LastResults += $result
+    return $result
 }
 function Test-Gateway {
     [CmdletBinding()] 
