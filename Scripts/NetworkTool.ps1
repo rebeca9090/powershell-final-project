@@ -65,7 +65,7 @@ function Write-Log {
     }
 }
 function Test-NetworkAdapter {
-     [CmdletBinding()] 
+    [CmdletBinding()] 
     param()
 
     $ts = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
