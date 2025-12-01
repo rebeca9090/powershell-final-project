@@ -15,12 +15,17 @@ Pending for Rebeca:
 - Minor refinements or documentation updates once teammate finishes internal test logic.
 - Optional polishing or minor message formatting once all functions are connected.
 
-Teammate’s responsibilities:
+Phailin's responsibilities:
 - Implement the internal logic for each Test-* function (NetworkAdapter, Gateway, DNS, etc.).
 - Ensure each Test-* returns an object with TestName, Success, Details, Target, and Timestamp.
 - Implement Write-Log and Export-HtmlReport to handle file outputs.
 - Align TestName values with those expected by Invoke-AutoFix (e.g., "DNS", "Gateway", "Web Access").
 - Optionally expand Auto-Fix for more detailed diagnostics or adapter restarts.
+
+Pending for Phailin:
+- Fix network adapter code before adding here
+- Add comments to codes to explain the code
+- TODO in invoke-AutoFix
 #>
 
 # Initialize global variables that will respectively, store the last test results, the timestamp for log/report files, and the base path of the script
@@ -37,12 +42,27 @@ $Global:LogPath    = Join-Path $basePath ("Logs\NetDiag_{0}.txt"  -f $timestamp)
 $Global:ReportPath = Join-Path $basePath ("Reports\NetReport_{0}.html" -f $timestamp)
 
 function Write-Log {
-    <#
-        TODO (teammate):
-        - Implement logging to $Global:LogPath
-        - Suggested signature:
-          Write-Log -Message "text" -Data $Global:LastResults
-    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$Message,
+        [ValidateSet("Info","Warning","Error")][string]$Level = "Info",
+        [array]$Data = $null
+    )
+
+    try {
+        $timeGenerated = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+        $entry = "{0} [{1}] - {2}" -f $timeGenerated, $Level.ToUpper(), $Message
+        Add-Content -Path $Global:LogPath -Value $entry
+
+        return [PSCustomObject]@{
+            Timestamp = $timeGenerated
+            Level     = $Level
+            Message   = $Message
+        }
+    }
+    catch {
+        Write-Warning "Failed to write log: $_"
+    }
 }
 function Test-NetworkAdapter {
      <#
@@ -53,40 +73,190 @@ function Test-NetworkAdapter {
     #>
 }
 function Test-Gateway {
-     <#
-        TODO (teammate): return [pscustomobject] with:
-        TestName, Success (bool), Details, Target, Timestamp
-        Make sure TestName is "Gateway" for Auto-Fix logic
-    #>
+    [CmdletBinding()] 
+    param()
+
+    $ts = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    $testName = "Gateway"
+
+    try {
+        $ipconfigs = Get-NetIPConfiguration -ErrorAction SilentlyContinue | Where-Object { $null -ne $_.IPv4DefaultGateway }
+        if (-not $ipconfigs) {
+            $details = "No IPv4 default gateway configured."
+            $success = $false
+            $target = "None"
+        }
+        else {
+            $gateways = $ipconfigs | ForEach-Object { $_.IPv4DefaultGateway.NextHop } | Sort-Object -Unique
+            $detailMsgs = @()
+            $successList = @()
+            foreach ($g in $gateways) {
+                $ok = Test-Connection -ComputerName $g -Count 2 -Quiet -ErrorAction SilentlyContinue
+                $successList += [PSCustomObject]@{ Gateway=$g; Reachable=$ok }
+                $detailMsgs += ("{0} reachable={1}" -f $g, $ok)
+            }
+            $allOk = ($successList | Where-Object { -not $_.Reachable }).Count -eq 0
+            $details = $detailMsgs -join "; "
+            $success = $allOk
+            $target = ($gateways -join ", ")
+        }
+    }
+    catch {
+        $details = "Exception: $_"
+        $success = $false
+        $target = "Gateway lookup"
+    }
+
+    $result = [PSCustomObject]@{
+        TestName  = $testName
+        Success   = [bool]$success
+        Details   = $details
+        Target    = $target
+        Timestamp = $ts
+    }
+
+    $level = if ($success) { "Info" } else { "Error" }
+    Write-Log -Message "Test: $testName - Success: $success - $details" -Level $level -Data @($result)
+    $Global:LastResults += $result
+    return $result
 }
 function Test-ExternalIP {
-     <#
-        TODO (teammate): return [pscustomobject] with:
-        TestName, Success (bool), Details, Target, Timestamp
-        Make sure TestName is "External IP" for Auto-Fix logic
-    #>
+    [CmdletBinding()] 
+    param()
+
+    $ts = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    $testName = "External IP"
+
+    try {
+        $ip = $null
+        try { $ip = Invoke-RestMethod -Uri "https://api.ipify.org?format=text" -TimeoutSec 10 } 
+        catch { $ip = Invoke-RestMethod -Uri "https://ifconfig.me/ip" -TimeoutSec 10 -ErrorAction SilentlyContinue }
+
+        if (-not $ip) {
+            $details = "Unable to retrieve external IP."
+            $success = $false
+            $target = "External IP"
+        }
+        else {
+            $details = "External IP: $ip"
+            $success = $true
+            $target = $ip
+        }
+    }
+    catch {
+        $details = "Exception: $_"
+        $success = $false
+        $target = "External IP lookup"
+    }
+
+    $result = [PSCustomObject]@{
+        TestName  = $testName
+        Success   = [bool]$success
+        Details   = $details
+        Target    = $target
+        Timestamp = $ts
+    }
+
+    $level = if ($success) { "Info" } else { "Error" }
+    Write-Log -Message "Test: $testName - Success: $success - $details" -Level $level -Data @($result)
+    $Global:LastResults += $result
+    return $result
 }
 function Test-DnsResolution {
     #the parameter was added to make sure the function doesn't crash when called
+    [CmdletBinding()] 
     param(
+        [Parameter(Mandatory = $true)]
         [string]$Domain
     )
-     <#
-        TODO (teammate): return [pscustomobject] with:
-        TestName, Success (bool), Details, Target, Timestamp
-        Make sure TestName is "DNS" for Auto-Fix logic
-    #>
+
+    $ts = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    $testName = "DNS"
+
+    try {
+        $answers = Resolve-DnsName -Name $Domain -ErrorAction SilentlyContinue
+        if ($answers) {
+            $ips = ($answers | Where-Object { $_.Type -in @('A','AAAA') } | Select-Object -ExpandProperty IPAddress) -join ", "
+            $details = if ([string]::IsNullOrWhiteSpace($ips)) { "Resolved non-address records" } else { "Resolved: $ips" }
+            $success = $true
+            $target = $Domain
+        }
+        else {
+            $details = "Resolution failed for $Domain."
+            $success = $false
+            $target = $Domain
+        }
+    }
+    catch {
+        $details = "Exception: $_"
+        $success = $false
+        $target = $Domain
+    }
+
+    $result = [PSCustomObject]@{
+        TestName  = $testName
+        Success   = [bool]$success
+        Details   = $details
+        Target    = $target
+        Timestamp = $ts
+    }
+
+    $level = if ($success) { "Info" } else { "Error" }
+    Write-Log -Message "Test: $testName - Success: $success - $details" -Level $level -Data @($result)
+    $Global:LastResults += $result
+    return $result
 }
 function Test-WebAccess {
     #the parameter was added to make sure the function doesn't crash when called
+    [CmdletBinding()] 
     param(
+        [Parameter(Mandatory = $true)]
         [string]$Url
     )
-     <#
-        TODO (teammate): return [pscustomobject] with:
-        TestName, Success (bool), Details, Target, Timestamp
-        Make sure TestName is "Web Access" for Auto-Fix logic
-    #>
+
+    $ts = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    $testName = "Web Access"
+
+    try {
+        $success = $false
+        $details = ""
+        $target = $Url
+
+        try {
+            $resp = Invoke-WebRequest -Uri $Url -Method Head -TimeoutSec 10 -ErrorAction Stop
+            $status = if ($resp.StatusCode) { $resp.StatusCode } else { 200 }
+            $details = "HTTP $status (HEAD)"
+            $success = ($status -ge 200 -and $status -lt 400)
+        } catch {
+            try {
+                $resp2 = Invoke-WebRequest -Uri $Url -Method Get -TimeoutSec 12 -ErrorAction Stop
+                $status2 = if ($resp2.StatusCode) { $resp2.StatusCode } else { 200 }
+                $details = "HTTP $status2 (GET)"
+                $success = ($status2 -ge 200 -and $status2 -lt 400)
+            } catch {
+                $details = "Request failed: $($_.Exception.Message)"
+                $success = $false
+            }
+        }
+    }
+    catch {
+        $details = "Exception: $_"
+        $success = $false
+        $target = $Url
+    }
+
+    $result = [PSCustomObject]@{
+        TestName  = $testName
+        Success   = [bool]$success
+        Details   = $details
+        Target    = $target
+        Timestamp = $ts
+    }
+
+    $level = if ($success) { "Info" } else { "Error" }
+    Write-Log -Message "Test: $testName - Success: $success - $details" -Level $level -Data @($result)
+    $Global:LastResults += $result
+    return $result
 }
 function Invoke-AutoFix {
     <#
@@ -141,14 +311,34 @@ function Invoke-AutoFix {
     Pause
 }
 function Export-HtmlReport {
+    [CmdletBinding()] 
     param(
-        [array]$Results
+        [Parameter(Mandatory = $true)]
+        [array]$Results,
+        [string]$Path
     )
-     <#
-        TODO (teammate):
-        - Convert $Results to HTML and save to $Global:ReportPath
-        - Optionally allow custom path
-    #>
+
+    if (-not $Results -or $Results.Count -eq 0) { Write-Host "No results to export."; return }
+
+    $outFile = if ($Path) { $Path } else { $Global:ReportPath }
+
+    $passCount = ($Results | Where-Object { $_.Success }).Count
+    $failCount = ($Results | Where-Object { -not $_.Success }).Count
+    $generated = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+
+    $htmlHeader = @"
+<html><head><title>Network Report</title></head><body>
+<h1>Network Report</h1><p>Generated: $generated</p>
+<h2>Summary</h2><ul><li>Passed: $passCount</li><li>Failed: $failCount</li></ul>
+<h2>Details</h2>
+"@
+
+    $tableHtml = $Results | Select-Object TestName, Timestamp, Target, Success, Details | ConvertTo-Html -Fragment -As Table
+    $htmlFooter = "</body></html>"
+
+    ($htmlHeader + $tableHtml + $htmlFooter) | Out-File -FilePath $outFile -Encoding UTF8
+    Write-Host "Report written to $outFile" -ForegroundColor Green
+    Write-Log -Message "Exported HTML report to $outFile" -Level "Info" -Data $Results
 }
 function Run-FullTest {
     $Global:LastResults = @()
@@ -245,7 +435,7 @@ function Run-BasicTest{
 }
 function Show-Menu {
     Clear-Host
-     Write-Host "==============================="
+    Write-Host "==============================="
     Write-Host "       NETWORK TOOL MENU       "
     Write-Host "==============================="
     Write-Host "1) Full Network Test"
