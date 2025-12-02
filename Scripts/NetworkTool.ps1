@@ -423,8 +423,8 @@ function Export-HtmlReport {
 
     $outFile = if ($Path) { $Path } else { $Global:ReportPath }
 
-    $passCount = ($Results | Where-Object { $_.Success }).Count
-    $failCount = ($Results | Where-Object { -not $_.Success }).Count
+    $passCount = @($Results | Where-Object { $_.Success }).Count
+    $failCount = @($Results | Where-Object { -not $_.Success }).Count
     $generated = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
 
     # Updated 2025-12-02 (Rebeca): added CSS styling and summary section for nicer HTML reports.
@@ -498,8 +498,8 @@ function Run-FullTest {
     Write-Host ""
 
     #This is just showing total of passed and failed tests, the failed tests are important for autofix(first is just storing the var and then write host is what displays it, the vars were created with chatgpt)
-    $passCount = ($Global:LastResults | Where-Object { $_.Success }).Count
-    $failCount = ($Global:LastResults | Where-Object { -not $_.Success }).Count
+    $passCount = @($Global:LastResults | Where-Object { $_.Success }).Count
+    $failCount = @($Global:LastResults | Where-Object { -not $_.Success }).Count
     Write-Host "Summary:" -ForegroundColor Cyan
     Write-Host "  Passed: $passCount"
     Write-Host "  Failed: $failCount"
@@ -543,8 +543,8 @@ function Run-BasicTest{
     $Global:LastResults | Format-Table TestName, Success, Details -AutoSize
     Write-Host ""
 
-    $passCount = ($Global:LastResults | Where-Object { $_.Success }).Count
-    $failCount = ($Global:LastResults | Where-Object { -not $_.Success }).Count
+    $passCount = @($Global:LastResults | Where-Object { $_.Success }).Count
+    $failCount = @($Global:LastResults | Where-Object { -not $_.Success }).Count
     Write-Host "Summary:" -ForegroundColor Cyan
     Write-Host "  Passed: $passCount"
     Write-Host "  Failed: $failCount"
