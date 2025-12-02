@@ -25,6 +25,13 @@ Phailin's responsibilities:
 Pending for Phailin:
 - Test Test-Gateway (works at home but error on campus)
 - TODO in invoke-AutoFix
+
+Update 2025-12-02 (Rebeca):
+- Fixed menu loop to exit cleanly using $running flag.
+- Removed duplicate additions to $Global:LastResults in Run-FullTest/Run-BasicTest.
+- Improved HTML report styling with basic CSS for readability.
+- Added extra logging for individual Auto-Fix steps (DNS and IP repair).
+- Wrapped ipconfig calls in try/catch to handle non-admin scenarios and log failures more clearly.
 #>
 
 # Initialize global variables that will respectively, store the last test results, the timestamp for log/report files, and the base path of the script
@@ -128,6 +135,10 @@ function Test-NetworkAdapter {
     return $result
 }
 # Check for gateway and test connectivity to the default gateway
+# NOTE (Rebeca 2025-12-02):
+# The Test-Gateway function may fail on university or corporate networks even when connectivity works,
+# because some routers/firewalls block ICMP (ping) requests for security.
+# This is normal behavior and not an error in the script.
 function Test-Gateway {
     [CmdletBinding()] 
     param()
@@ -328,56 +339,78 @@ function Test-WebAccess {
 }
 function Invoke-AutoFix {
     <#
-        TODO (you & teammate):
-        - Use $Global:LastResults to decide what to fix
-        - Example actions:
-            ipconfig /flushdns
-            ipconfig /renew
-            netsh int ip reset
+        Updated 2025-12-02 (Rebeca):
+        - Added detailed logging around each repair step.
+        - Wrapped ipconfig calls in try/catch to handle non-admin or other failures gracefully.
     #>
+
     if (-not $Global:LastResults -or $Global:LastResults.Count -eq 0) {
         Write-Host "No previous test results found. Run a test first." -ForegroundColor Red
         Pause
         return
     }
 
-    #The code below checks for any unsuccessful tests in the last results and stores it in failed results var for further processing
+    # Check for any unsuccessful tests
     $failedTests = $Global:LastResults | Where-Object { -not $_.Success }
     if (-not $failedTests -or $failedTests.Count -eq 0) {
         Write-Host "All tests are currently passing. Nothing to fix." -ForegroundColor Green
         Pause
         return
     }
+
     Write-Host "Running Auto-Fix based on failed tests..." -ForegroundColor Cyan
     Write-Host ""
+
     $hasAdapterIssue = $failedTests.TestName -contains "Network Adapter"
     $hasGatewayIssue = $failedTests.TestName -contains "Gateway"
     $hasDnsIssue     = $failedTests.TestName -contains "DNS"
     $hasExtIpIssue   = $failedTests.TestName -contains "External IP"
     $hasWebIssue     = $failedTests.TestName -contains "Web Access"
-    #This is checking for DNS issues and fixing it with flush and register commands
+
+    # DNS-related fixes (flush + re-register)
     if ($hasDnsIssue -or $hasWebIssue) {
         Write-Host "Applying DNS repairs (flush and re-register)..." -ForegroundColor Yellow
-        ipconfig /flushdns        | Out-Null
-        ipconfig /registerdns     | Out-Null
+        Write-Log -Message "Starting DNS repair (flushdns + registerdns)." -Level "Info"
+
+        try {
+            ipconfig /flushdns    | Out-Null
+            ipconfig /registerdns | Out-Null
+            Write-Log -Message "DNS repair completed successfully." -Level "Info"
+        }
+        catch {
+            Write-Host "DNS repair failed. You may need to run PowerShell as Administrator." -ForegroundColor Red
+            Write-Log -Message "DNS repair failed: $_" -Level "Error"
+        }
     }
-    #This is checking for gateway, external IP or web issues and renewing the IP configuration if any of those are found
+
+    # IP configuration fixes (release + renew)
     if ($hasGatewayIssue -or $hasExtIpIssue -or $hasWebIssue) {
         Write-Host "Renewing IP configuration..." -ForegroundColor Yellow
-        ipconfig /release         | Out-Null
-        ipconfig /renew           | Out-Null
+        Write-Log -Message "Starting IP configuration repair (release + renew)." -Level "Info"
+
+        try {
+            ipconfig /release | Out-Null
+            ipconfig /renew   | Out-Null
+            Write-Log -Message "IP configuration repair completed successfully." -Level "Info"
+        }
+        catch {
+            Write-Host "IP configuration repair failed. You may need to run PowerShell as Administrator." -ForegroundColor Red
+            Write-Log -Message "IP configuration repair failed: $_" -Level "Error"
+        }
     }
-    #This is checking for network adapter issues and suggesting a restart of the adapter if found (There is definitely room to improve on this one, like restarting the adapter via script)
+
+    # Adapter issues (still advisory, not automatic restart)
     if ($hasAdapterIssue) {
         Write-Host "Adapter issues detected. Consider restarting the adapter." -ForegroundColor Yellow
+        Write-Log -Message "Adapter issues detected; user advised to restart adapter manually." -Level "Warning"
     }
 
     Write-Host ""
     Write-Host "Auto-Fix steps completed. Re-run a test to verify connectivity." -ForegroundColor Green
-
-    Write-Log -Message "Auto-Fix executed." -Data $Global:LastResults
+    Write-Log -Message "Auto-Fix sequence finished." -Level "Info" -Data $Global:LastResults
     Pause
 }
+
 function Export-HtmlReport {
     [CmdletBinding()] 
     param(
@@ -394,8 +427,43 @@ function Export-HtmlReport {
     $failCount = ($Results | Where-Object { -not $_.Success }).Count
     $generated = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
 
+    # Updated 2025-12-02 (Rebeca): added CSS styling and summary section for nicer HTML reports.
+    $style = @"
+<style>
+    body {
+        font-family: Segoe UI, Arial, sans-serif;
+        margin: 20px;
+    }
+    h1 {
+        color: #2c3e50;
+    }
+    h2 {
+        margin-top: 24px;
+        color: #34495e;
+    }
+    ul {
+        list-style-type: disc;
+        margin-left: 20px;
+    }
+    table {
+        border-collapse: collapse;
+        width: 100%;
+        margin-top: 10px;
+    }
+    th, td {
+        border: 1px solid #cccccc;
+        padding: 6px 10px;
+        text-align: left;
+        vertical-align: top;
+    }
+    th {
+        background-color: #f2f2f2;
+        font-weight: bold;
+    }
+</style>
+"@
     $htmlHeader = @"
-<html><head><title>Network Report</title></head><body>
+<html><head><title>Network Report</title>$style</head><body>
 <h1>Network Report</h1><p>Generated: $generated</p>
 <h2>Summary</h2><ul><li>Passed: $passCount</li><li>Failed: $failCount</li></ul>
 <h2>Details</h2>
@@ -418,11 +486,11 @@ function Run-FullTest {
 
     Write-Host "Using domain: $domain" -ForegroundColor Yellow
     Write-Host ""
-    $Global:LastResults += Test-NetworkAdapter
-    $Global:LastResults += Test-Gateway
-    $Global:LastResults += Test-ExternalIP
-    $Global:LastResults += Test-DnsResolution -Domain $domain
-    $Global:LastResults += Test-WebAccess -Url ("https://{0}" -f $domain)
+    Test-NetworkAdapter
+    Test-Gateway
+    Test-ExternalIP
+    Test-DnsResolution -Domain $domain
+    Test-WebAccess -Url ("https://{0}" -f $domain)
 
     #Added below with chatgpt for better user experience, this is dependable on the test functions and that they have TestName, Success and Details properties
     Write-Host "Detailed results:" -ForegroundColor Cyan
@@ -467,9 +535,9 @@ function Run-BasicTest{
 
     Write-Host "Using domain: $domain" -ForegroundColor Yellow
     Write-Host ""
-    $Global:LastResults += Test-Gateway
-    $Global:LastResults += Test-ExternalIP
-    $Global:LastResults += Test-DnsResolution -Domain $domain
+    Test-Gateway
+    Test-ExternalIP
+    Test-DnsResolution -Domain $domain
 
     Write-Host "Detailed results:" -ForegroundColor Cyan
     $Global:LastResults | Format-Table TestName, Success, Details -AutoSize
@@ -513,6 +581,7 @@ function Show-Menu {
     Write-Host "5) Exit"
     Write-Host "==============================="
 }
+$running = $true
 do {
     Show-Menu
     $choice = Read-Host "Select an option, from 1 to 5"
