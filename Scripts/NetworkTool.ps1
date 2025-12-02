@@ -23,8 +23,7 @@ Phailin's responsibilities:
 - Optionally expand Auto-Fix for more detailed diagnostics or adapter restarts.
 
 Pending for Phailin:
-- Test Test-Gateway (Error on campus, success at home)
-- Add comments to codes to explain the code
+- Test Test-Gateway (works at home but error on campus)
 - TODO in invoke-AutoFix
 #>
 
@@ -42,18 +41,27 @@ $Global:LogPath    = Join-Path $basePath ("Logs\NetDiag_{0}.txt"  -f $timestamp)
 $Global:ReportPath = Join-Path $basePath ("Reports\NetReport_{0}.html" -f $timestamp)
 
 function Write-Log {
+    # the CmdletBinding allows us to use advanced function features
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory = $true)][string]$Message,
-        [ValidateSet("Info","Warning","Error")][string]$Level = "Info",
+        [Parameter(Mandatory = $true)]
+        [string]$Message,
+        
+        [ValidateSet("Info","Warning","Error")]
+        [string]$Level = "Info",
+        
         [array]$Data = $null
     )
 
     try {
+        # Create formatted log entry with timestamp and level
         $timeGenerated = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
         $entry = "{0} [{1}] - {2}" -f $timeGenerated, $Level.ToUpper(), $Message
+        
+        # Append to the log file
         Add-Content -Path $Global:LogPath -Value $entry
 
+        # Return structured object
         return [PSCustomObject]@{
             Timestamp = $timeGenerated
             Level     = $Level
@@ -64,6 +72,8 @@ function Write-Log {
         Write-Warning "Failed to write log: $_"
     }
 }
+
+# Check what network adapters are present and in "Up" status
 function Test-NetworkAdapter {
     [CmdletBinding()] 
     param()
@@ -72,15 +82,17 @@ function Test-NetworkAdapter {
     $testName = "Network Adapter"
 
     try {
+        # Getting all network adapters
         $adapters = @(Get-NetAdapter -ErrorAction SilentlyContinue)
 
+        # Check if no network adapters found
         if ($adapters.Count -eq 0) {
             $details = "No network adapters found."
             $success = $false
             $target = "Local adapters"
         }
         else {
-            # Force array creation and trim status strings
+            # Find the network adapters that has "Up" status
             $up = @($adapters | Where-Object { $_.Status.Trim() -eq "Up" })
             
             if ($up.Count -gt 0) {
@@ -101,6 +113,7 @@ function Test-NetworkAdapter {
         $success = $false
         $target = "Local adapters"
     }
+    # Create the structured object for the auto-fix and reporting
     $result = [PSCustomObject]@{
         TestName  = $testName
         Success   = [bool]$success
@@ -108,11 +121,13 @@ function Test-NetworkAdapter {
         Target    = $target
         Timestamp = $ts
     }
+    # add results to global collection and log the results
     $level = if ($success) { "Info" } else { "Error" }
     Write-Log -Message "Test: $testName - Success: $success - $details" -Level $level -Data @($result)
     $Global:LastResults += $result
     return $result
 }
+# Check for gateway and test connectivity to the default gateway
 function Test-Gateway {
     [CmdletBinding()] 
     param()
@@ -122,12 +137,14 @@ function Test-Gateway {
 
     try {
         $ipconfigs = Get-NetIPConfiguration -ErrorAction SilentlyContinue | Where-Object { $null -ne $_.IPv4DefaultGateway }
+        
         if (-not $ipconfigs) {
             $details = "No IPv4 default gateway configured."
             $success = $false
             $target = "None"
         }
         else {
+            # Getting the gateway IP addresses for testing
             $gateways = $ipconfigs | ForEach-Object { $_.IPv4DefaultGateway.NextHop } | Sort-Object -Unique
             $detailMsgs = @()
             $successList = @()
@@ -136,6 +153,7 @@ function Test-Gateway {
                 $successList += [PSCustomObject]@{ Gateway=$g; Reachable=$ok }
                 $detailMsgs += ("{0} reachable={1}" -f $g, $ok)
             }
+            # Success only if all gateway are reachable
             $allOk = ($successList | Where-Object { -not $_.Reachable }).Count -eq 0
             $details = $detailMsgs -join "; "
             $success = $allOk
@@ -161,6 +179,7 @@ function Test-Gateway {
     $Global:LastResults += $result
     return $result
 }
+# Verifying internet connectivity by retrieving public IP address
 function Test-ExternalIP {
     [CmdletBinding()] 
     param()
@@ -169,16 +188,19 @@ function Test-ExternalIP {
     $testName = "External IP"
 
     try {
+        # Testing with 2 different external IP services
         $ip = $null
         try { $ip = Invoke-RestMethod -Uri "https://api.ipify.org?format=text" -TimeoutSec 10 } 
         catch { $ip = Invoke-RestMethod -Uri "https://ifconfig.me/ip" -TimeoutSec 10 -ErrorAction SilentlyContinue }
 
+        # If both try-catch fails, tells us theres no internet connectivity
         if (-not $ip) {
             $details = "Unable to retrieve external IP."
             $success = $false
             $target = "External IP"
         }
         else {
+            # when retrieving public Ip is successful
             $details = "External IP: $ip"
             $success = $true
             $target = $ip
@@ -203,6 +225,7 @@ function Test-ExternalIP {
     $Global:LastResults += $result
     return $result
 }
+#Test DNS by resolving domain to IP address
 function Test-DnsResolution {
     #the parameter was added to make sure the function doesn't crash when called
     [CmdletBinding()] 
@@ -215,7 +238,9 @@ function Test-DnsResolution {
     $testName = "DNS"
 
     try {
+        # Testing to resolve domain name to IP address (eg. $Domain = google.com)
         $answers = Resolve-DnsName -Name $Domain -ErrorAction SilentlyContinue
+
         if ($answers) {
             $ips = ($answers | Where-Object { $_.Type -in @('A','AAAA') } | Select-Object -ExpandProperty IPAddress) -join ", "
             $details = if ([string]::IsNullOrWhiteSpace($ips)) { "Resolved non-address records" } else { "Resolved: $ips" }
@@ -223,6 +248,7 @@ function Test-DnsResolution {
             $target = $Domain
         }
         else {
+            # When the DNS resolution completely fails
             $details = "Resolution failed for $Domain."
             $success = $false
             $target = $Domain
@@ -247,6 +273,7 @@ function Test-DnsResolution {
     $Global:LastResults += $result
     return $result
 }
+# Testing web connectivity using HTTP/ HTTPS requests (eg. https://google.com)
 function Test-WebAccess {
     #the parameter was added to make sure the function doesn't crash when called
     [CmdletBinding()] 
