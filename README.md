@@ -56,9 +56,9 @@ The script creates the `Logs` and `Reports` directories automatically if missing
    ```
    cd "C:\Path\To\Project"
    ```
-3. **(Optional)** Allow script execution:
+3. **Allow script execution (Yes to all):**
    ```
-   Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
+   Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
    ```
 4. **Run the script:**
    ```
