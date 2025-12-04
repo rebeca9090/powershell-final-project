@@ -11,20 +11,12 @@ Rebeca’s responsibilities:
 - Integrated Export-HtmlReport and Write-Log calls for future logging/reporting.
 - Developed the core logic for Invoke-AutoFix, including detecting failed tests and triggering DNS/IP repairs.
 
-Pending for Rebeca:
-- Minor refinements or documentation updates once teammate finishes internal test logic.
-- Optional polishing or minor message formatting once all functions are connected.
-
 Phailin's responsibilities:
 - Implement the internal logic for each Test-* function (NetworkAdapter, Gateway, DNS, etc.).
 - Ensure each Test-* returns an object with TestName, Success, Details, Target, and Timestamp.
 - Implement Write-Log and Export-HtmlReport to handle file outputs.
 - Align TestName values with those expected by Invoke-AutoFix (e.g., "DNS", "Gateway", "Web Access").
 - Optionally expand Auto-Fix for more detailed diagnostics or adapter restarts.
-
-Pending for Phailin:
-- Test Test-Gateway (works at home but error on campus)
-- TODO in invoke-AutoFix
 
 Update 2025-12-02 (Rebeca):
 - Fixed menu loop to exit cleanly using $running flag.
